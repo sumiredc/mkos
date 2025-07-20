@@ -15,6 +15,7 @@ type EfiVoid = u8;
 type EfiHandle = u64;
 type Result<T> = core::result::Result<T, &'static str>;
 
+/// EFI GUID を取り扱うための構造体
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct EfiGuid {
@@ -24,6 +25,8 @@ struct EfiGuid {
     pub data3: [u8; 8],
 }
 
+/// EFI Graphics Output Protocol を示す GUID
+/// UEFI 仕様書に定義されている
 const EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID: EfiGuid = EfiGuid {
     data0: 0x9042a9de,
     data1: 0x23dc,
@@ -40,7 +43,7 @@ enum EfiStatus {
 
 #[repr(C)]
 struct EfiBootServicesTable {
-    _reserved0: [u64; 7],
+    _reserved0: [u64; 7], // 仕様書に沿って調整するメンバのオフセット
     get_memory_map: extern "win64" fn(
         memory_map_size: *mut usize,
         memory_map: *mut u8,
@@ -59,6 +62,7 @@ struct EfiBootServicesTable {
     ) -> EfiStatus,
 }
 impl EfiBootServicesTable {
+    /// UEFI の メモリアドレス空間に関する情報を取得するための API を実行する処理
     fn get_memory_map(&self, map: &mut MemoryMapHolder) -> EfiStatus {
         (self.get_memory_map)(
             &mut map.memory_map_size,
@@ -69,10 +73,16 @@ impl EfiBootServicesTable {
         )
     }
 }
+
+/// コンパイル時のアサーション
+/// UEFI とのやり取りに使うため、データ構造（メモリレイアウト、サイズなど）が厳密に決められているので
+/// コンパイル時に仕様との一致を保証するために定義
 const _: () = assert!(offset_of!(EfiBootServicesTable, get_memory_map) == 56);
 const _: () = assert!(offset_of!(EfiBootServicesTable, exit_boot_services) == 232);
 const _: () = assert!(offset_of!(EfiBootServicesTable, locate_protocol) == 320);
 
+/// メモリ領域の属性を記述したディスクリプタが示す
+/// メモリ領域の種類
 #[repr(i64)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(non_camel_case_types)]
@@ -94,6 +104,7 @@ pub enum EfiMemoryType {
     PERSISTENT_MEMORY,
 }
 
+/// get_memory_map 関数が返す、あるメモリ領域の属性を記述したディスクリプタ
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct EfiMemoryDescriptor {
@@ -106,6 +117,7 @@ struct EfiMemoryDescriptor {
 
 const MEMORY_MAP_BUFFER_SIZE: usize = 0x8000;
 
+/// メモリマップを取得する際に、書き込み先領域を確保するための構造体
 struct MemoryMapHolder {
     memory_map_buffer: [u8; MEMORY_MAP_BUFFER_SIZE],
     memory_map_size: usize,
@@ -131,7 +143,6 @@ impl<'a> Iterator for MemoryMapIterator<'a> {
         }
     }
 }
-
 impl MemoryMapHolder {
     pub const fn new() -> MemoryMapHolder {
         MemoryMapHolder {
@@ -154,17 +165,24 @@ struct EfiSystemTable {
 }
 const _: () = assert!(offset_of!(EfiSystemTable, boot_services) == 96);
 
+/// UEIF の画面出力プロトコルから参照可能な
+/// 画素数の情報が含まれた構造体
 #[repr(C)]
 #[derive(Debug)]
 struct EfiGraphicsOutputProtocolPixelInfo {
     version: u32,
-    pub horizontal_resolution: u32,
-    pub vertical_resolution: u32,
+    pub horizontal_resolution: u32, // 水平方向の画素数
+    pub vertical_resolution: u32,   // 垂直方向の画素数
     _padding0: [u32; 5],
     pub pixels_per_scan_line: u32,
 }
+
+/// コンパイル時のアサーション
+/// UEFI とのやり取りに使うため、データ構造（メモリレイアウト、サイズなど）が厳密に決められているので
+/// コンパイル時に仕様との一致を保証するために定義
 const _: () = assert!(size_of::<EfiGraphicsOutputProtocolPixelInfo>() == 36);
 
+/// UEIF の画面出力プロトコルが持つ情報群
 #[repr(C)]
 #[derive(Debug)]
 struct EfiGraphicsOutputProtocolMode<'a> {
@@ -172,16 +190,19 @@ struct EfiGraphicsOutputProtocolMode<'a> {
     pub mode: u32,
     pub info: &'a EfiGraphicsOutputProtocolPixelInfo,
     pub size_of_info: u64,
-    pub frame_buffer_base: usize,
-    pub frame_buffer_size: usize,
+    pub frame_buffer_base: usize, // 画面に表示される各ピクセルの情報が並んだフレームバッファと呼ばれるメモリ領域の開始アドレス
+    pub frame_buffer_size: usize, // 画面に表示される各ピクセルの情報が並んだフレームバッファと呼ばれるメモリ領域のバイト単位での大きさ
 }
 
+/// UEIF での画面出力のためのプロトコル
 #[repr(C)]
 #[derive(Debug)]
 struct EfiGraphicsOutputProtocol<'a> {
     reserved: [u64; 3],
-    pub mode: &'a EfiGraphicsOutputProtocolMode<'a>,
+    pub mode: &'a EfiGraphicsOutputProtocolMode<'a>, // 現在利用中の画面モードに対応する情報が格納された構造体へのポインタ
 }
+
+/// EfiGraphicsOutputProtocol を UEFI から取得する関数
 fn locate_graphic_protocol<'a>(
     efi_system_table: &EfiSystemTable,
 ) -> Result<&'a EfiGraphicsOutputProtocol<'a>> {
@@ -197,10 +218,16 @@ fn locate_graphic_protocol<'a>(
     Ok(unsafe { &*graphic_output_protocol })
 }
 
+/// インラインアセンブリで HLT を呼び出すための関数
 pub fn hlt() {
     unsafe { asm!("hlt") }
 }
 
+/// スタート関数
+/// main 関数に該当するもの
+/// no_std を指定するので手動で指定しなければならない
+///
+/// 第2引数 EFI System Table のアドレス
 #[no_mangle]
 fn efi_main(image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
     let mut vram = init_vram(efi_system_table).expect("init_bram failed");
@@ -239,6 +266,7 @@ fn efi_main(image_handle: EfiHandle, efi_system_table: &EfiSystemTable) {
     }
 }
 
+/// 図形、線、文字のテストパターン出力
 fn draw_test_pattern<T: Bitmap>(buf: &mut T) {
     let w = 128;
     let left = buf.width() - w - 1;
@@ -259,6 +287,11 @@ fn draw_test_pattern<T: Bitmap>(buf: &mut T) {
     draw_str_fg(buf, left, h * colors.len() as i64 + 16, 0x00ff00, "ABCDEF");
 }
 
+/// プログラムが予期せぬエラーを引き起こした際に
+/// 安全に停止するための関数
+/// hlt(): CPU を停止させるアセンブリ命令
+///
+/// 無限ループで hlt() を呼び出すことで、無限に CPU を停止させ続ける
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
     loop {
@@ -266,6 +299,7 @@ fn panic(_info: &PanicInfo) -> ! {
     }
 }
 
+/// 2次元画像を抽象化したインターフェース
 trait Bitmap {
     fn bytes_per_pixel(&self) -> i64;
     fn pixels_per_line(&self) -> i64;
@@ -281,6 +315,9 @@ trait Bitmap {
             .add(((y * self.pixels_per_line() + x) * self.bytes_per_pixel()) as usize)
             as *mut u32
     }
+
+    /// 与えられた x, y 座標から
+    /// その座標にあるフレームバッファ内のピクセルデータへの参照を返す
     fn pixel_at_mut(&mut self, x: i64, y: i64) -> Option<&mut u32> {
         if self.is_in_x_range(x) && self.is_in_y_range(y) {
             // SAFETY: (x, y) is always validated by the checks above.
@@ -297,6 +334,7 @@ trait Bitmap {
     }
 }
 
+/// VRAM を表現する構造体
 #[derive(Clone, Copy)]
 struct VramBufferInfo {
     buf: *mut u8,
@@ -323,6 +361,7 @@ impl Bitmap for VramBufferInfo {
     }
 }
 
+/// UEFI から得られた情報を元に VramBufferInfo を作る関数
 fn init_vram(efi_system_table: &EfiSystemTable) -> Result<VramBufferInfo> {
     let gp = locate_graphic_protocol(efi_system_table)?;
     Ok(VramBufferInfo {
@@ -335,16 +374,19 @@ fn init_vram(efi_system_table: &EfiSystemTable) -> Result<VramBufferInfo> {
 
 /// # Safety
 ///
+/// 点を打つ関数
 /// (x, y) must be a valid point in the buf.
 unsafe fn unchecked_draw_point<T: Bitmap>(buf: &mut T, color: u32, x: i64, y: i64) {
     *buf.unchecked_pixel_at_mut(x, y) = color;
 }
 
+/// 範囲チェックが入った点を打つ関数
 fn draw_point<T: Bitmap>(buf: &mut T, color: u32, x: i64, y: i64) -> Result<()> {
     *(buf.pixel_at_mut(x, y).ok_or("Out of Range")?) = color;
     Ok(())
 }
 
+// 四角形を描画する関数
 fn fill_rect<T: Bitmap>(buf: &mut T, color: u32, px: i64, py: i64, w: i64, h: i64) -> Result<()> {
     if !buf.is_in_x_range(px)
         || !buf.is_in_y_range(py)
@@ -363,6 +405,7 @@ fn fill_rect<T: Bitmap>(buf: &mut T, color: u32, px: i64, py: i64, w: i64, h: i6
     Ok(())
 }
 
+/// 直線となる整数座標の点を求めるアルゴリズム
 fn calc_slope_point(da: i64, db: i64, ia: i64) -> Option<i64> {
     if da < db {
         None
@@ -375,6 +418,7 @@ fn calc_slope_point(da: i64, db: i64, ia: i64) -> Option<i64> {
     }
 }
 
+/// 直線を描画する関数
 fn draw_line<T: Bitmap>(buf: &mut T, color: u32, x0: i64, y0: i64, x1: i64, y1: i64) -> Result<()> {
     if !buf.is_in_x_range(x0) || !buf.is_in_y_range(y0) || !buf.is_in_y_range(y1) {
         return Err("Out of Range");
@@ -423,6 +467,7 @@ fn lookup_font(c: char) -> Option<[[char; 8]; 16]> {
     None
 }
 
+/// 文字(char)を描画するための関数
 fn draw_font_fg<T: Bitmap>(buf: &mut T, x: i64, y: i64, color: u32, c: char) {
     if let Some(font) = lookup_font(c) {
         for (dy, row) in font.iter().enumerate() {
@@ -437,12 +482,14 @@ fn draw_font_fg<T: Bitmap>(buf: &mut T, x: i64, y: i64, color: u32, c: char) {
     }
 }
 
+/// 文字列を描画するための関数
 fn draw_str_fg<T: Bitmap>(buf: &mut T, x: i64, y: i64, color: u32, s: &str) {
     for (i, c) in s.chars().enumerate() {
         draw_font_fg(buf, x + i as i64 * 8, y, color, c)
     }
 }
 
+/// writeln!() マクロに渡し文字列を描画するための構造体
 struct VramTextWriter<'a> {
     vram: &'a mut VramBufferInfo,
     cursor_x: i64,
@@ -472,6 +519,7 @@ impl fmt::Write for VramTextWriter<'_> {
     }
 }
 
+// UEFI を終了するための exit_boot_service() をコールするラッパー関数
 fn exit_from_efi_boot_services(
     image_handle: EfiHandle,
     efi_system_table: &EfiSystemTable,
