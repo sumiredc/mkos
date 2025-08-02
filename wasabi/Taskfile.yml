@@ -16,3 +16,6 @@ tasks:
   clippy:
     cmds:
       - cargo clippy
+  lscpu:
+    cmds:
+      - system_profiler SPHardwareDataType
